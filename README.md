@@ -11,9 +11,27 @@ The private key is generated on-device and installed into the Android system Key
 3. **Import signed certificate** — tap the + button next to the pending key, select the signed `.crt` file. The app bundles the private key + signed cert into a PKCS#12 and launches the Android system KeyChain installer.
 4. **Use the certificate** — apps like OpenVPN for Android can now select it from the system KeyChain.
 
-## Use case
+## Example: OpenVPN with hardware-bound client keys
 
-This app was built for OpenVPN client certificate authentication where the private key must stay on the device. OpenVPN for Android uses the system KeyChain (`KeyChain.choosePrivateKeyAlias()`) to select client certificates, so the key must be installed there rather than in the app-private Android Keystore.
+The traditional way to set up OpenVPN client certificates is to generate the key on a server, bundle it into a `.p12` or `.ovpn` file, and transfer it to the phone. The problem: the private key exists as a copyable file. Anyone who gets the `.ovpn` can clone your VPN identity.
+
+With RequestCSR, the private key is generated **on the phone** and never leaves it:
+
+1. Open RequestCSR, tap **Generate Key + CSR**, save `client.csr.pem`
+2. Transfer the CSR to your server and sign it with your CA (e.g. EasyRSA):
+   ```
+   easyrsa sign-req client phone
+   ```
+3. Transfer the signed certificate back to the phone
+4. In RequestCSR, tap **+** next to the pending key, select the signed `.crt` — the app installs the key + cert into the Android system KeyChain
+5. In OpenVPN for Android, import your `.ovpn` profile (which contains only the CA cert and tls-crypt key — no client cert or private key)
+6. Edit the profile, select the certificate from the system KeyChain, and connect
+
+**What's protected:**
+- The `.ovpn` file alone is useless — it contains no client credentials, only the CA cert (public) and tls-crypt key (DoS protection)
+- The private key lives in the system KeyChain, hardware-backed by TEE/Titan M2 on supported devices
+- Even if the phone is rooted, the key cannot be extracted from hardware-backed storage
+- If the phone is lost, revoke the certificate server-side — no one can clone the key to another device
 
 ## Building
 
