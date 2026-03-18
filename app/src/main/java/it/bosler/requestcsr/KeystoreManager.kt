@@ -1,110 +1,112 @@
 package it.bosler.requestcsr
 
+import android.content.Context
 import android.os.Build
-import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import org.bouncycastle.asn1.x500.X500Name
-import org.bouncycastle.operator.ContentSigner
-import org.bouncycastle.asn1.ASN1ObjectIdentifier
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier
-import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder
-import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder
 import java.io.ByteArrayOutputStream
-import java.io.OutputStream
+import java.io.File
 import java.security.KeyFactory
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
-import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 
 object KeystoreManager {
 
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
+    private const val PENDING_KEYS_DIR = "pending_keys"
 
-    /**
-     * Generate an RSA 4096 key pair in the Android Keystore.
-     * The key is non-extractable and marked for signing.
-     */
-    fun generateKeyPair(alias: String) {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
+    // ── In-memory key generation (for system KeyChain flow) ──
 
-        // Delete existing key if present
-        if (keyStore.containsAlias(alias)) {
-            keyStore.deleteEntry(alias)
-        }
-
-        val parameterSpec = KeyGenParameterSpec.Builder(
-            alias,
-            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-        )
-            .setKeySize(4096)
-            .setDigests(
-                KeyProperties.DIGEST_SHA256,
-                KeyProperties.DIGEST_SHA384,
-                KeyProperties.DIGEST_SHA512
-            )
-            .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-            .setUserAuthenticationRequired(false)
-            .build()
-
-        val keyPairGenerator = KeyPairGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_RSA,
-            KEYSTORE_PROVIDER
-        )
-        keyPairGenerator.initialize(parameterSpec)
-        keyPairGenerator.generateKeyPair()
+    fun generateKeyPairInMemory(): KeyPair {
+        val kpg = KeyPairGenerator.getInstance("RSA")
+        kpg.initialize(4096)
+        return kpg.generateKeyPair()
     }
 
-    /**
-     * List all key aliases in the Android Keystore.
-     */
-    fun listKeys(): List<String> {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-        return keyStore.aliases().toList()
+    fun generateCSR(keyPair: KeyPair, commonName: String): String {
+        val subject = X500Name("CN=$commonName")
+        val signer = JcaContentSignerBuilder("SHA256withRSA").build(keyPair.private)
+        val csr = JcaPKCS10CertificationRequestBuilder(subject, keyPair.public).build(signer)
+        val base64 = Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(csr.encoded)
+        return "-----BEGIN CERTIFICATE REQUEST-----\n$base64\n-----END CERTIFICATE REQUEST-----\n"
     }
 
-    /**
-     * Check whether the key with the given alias exists in the keystore.
-     */
-    fun keyExists(alias: String): Boolean {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-        return keyStore.containsAlias(alias)
+    // ── Pending key storage (app-internal, temporary until KeyChain install) ──
+
+    fun savePrivateKey(context: Context, alias: String, key: PrivateKey) {
+        val dir = File(context.filesDir, PENDING_KEYS_DIR)
+        dir.mkdirs()
+        File(dir, "$alias.key").writeBytes(key.encoded)
     }
 
-    /**
-     * Delete the key with the given alias from the keystore.
-     */
-    fun deleteKey(alias: String) {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-        if (keyStore.containsAlias(alias)) {
-            keyStore.deleteEntry(alias)
-        }
+    fun loadPrivateKey(context: Context, alias: String): PrivateKey? {
+        val file = File(context.filesDir, "$PENDING_KEYS_DIR/$alias.key")
+        if (!file.exists()) return null
+        val keySpec = PKCS8EncodedKeySpec(file.readBytes())
+        return KeyFactory.getInstance("RSA").generatePrivate(keySpec)
     }
 
-    /**
-     * Determine whether the key is stored in hardware (TEE / StrongBox / Titan M2).
-     * Returns a human-readable description.
-     */
+    fun deletePrivateKey(context: Context, alias: String) {
+        File(context.filesDir, "$PENDING_KEYS_DIR/$alias.key").delete()
+    }
+
+    fun listPendingKeys(context: Context): List<String> {
+        val dir = File(context.filesDir, PENDING_KEYS_DIR)
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles()
+            ?.filter { it.extension == "key" }
+            ?.map { it.nameWithoutExtension }
+            ?: emptyList()
+    }
+
+    // ── PKCS#12 creation (for KeyChain install) ──
+
+    fun createPkcs12(
+        privateKey: PrivateKey,
+        signedCertBytes: ByteArray,
+        alias: String,
+        password: String = "",
+    ): ByteArray {
+        val certFactory = CertificateFactory.getInstance("X.509")
+        val cert = certFactory.generateCertificate(signedCertBytes.inputStream()) as X509Certificate
+        val ks = KeyStore.getInstance("PKCS12")
+        ks.load(null, null)
+        ks.setKeyEntry(alias, privateKey, password.toCharArray(), arrayOf(cert))
+        val baos = ByteArrayOutputStream()
+        ks.store(baos, password.toCharArray())
+        return baos.toByteArray()
+    }
+
+    // ── Android Keystore methods (for listing/cleanup of old keys) ──
+
+    fun listKeystoreKeys(): List<String> {
+        val ks = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        ks.load(null)
+        return ks.aliases().toList()
+    }
+
+    fun deleteKeystoreKey(alias: String) {
+        val ks = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        ks.load(null)
+        if (ks.containsAlias(alias)) ks.deleteEntry(alias)
+    }
+
     fun getKeySecurityLevel(alias: String): String {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-
-        val key = keyStore.getKey(alias, null) as? PrivateKey
-            ?: return "Key not found"
-
+        val ks = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        ks.load(null)
+        val key = ks.getKey(alias, null) as? PrivateKey ?: return "Key not found"
         return try {
             val factory = KeyFactory.getInstance(key.algorithm, KEYSTORE_PROVIDER)
             val keyInfo = factory.getKeySpec(key, KeyInfo::class.java)
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 when (keyInfo.securityLevel) {
                     KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox (hardware)"
@@ -115,108 +117,10 @@ object KeystoreManager {
                 }
             } else {
                 @Suppress("DEPRECATION")
-                if (keyInfo.isInsideSecureHardware) {
-                    "Hardware-backed (TEE)"
-                } else {
-                    "Software (NOT hardware-backed)"
-                }
+                if (keyInfo.isInsideSecureHardware) "Hardware-backed (TEE)" else "Software (NOT hardware-backed)"
             }
         } catch (e: Exception) {
             "Could not determine: ${e.message}"
         }
-    }
-
-    /**
-     * Import a CA-signed certificate and associate it with the existing private key.
-     * This replaces the self-signed cert that was generated with the key pair.
-     */
-    fun importSignedCertificate(alias: String, certBytes: ByteArray) {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-
-        val privateKey = keyStore.getKey(alias, null) as? PrivateKey
-            ?: throw IllegalStateException("Private key not found for alias: $alias")
-
-        val certFactory = CertificateFactory.getInstance("X.509")
-        val cert = certFactory.generateCertificate(certBytes.inputStream()) as X509Certificate
-
-        keyStore.setKeyEntry(alias, privateKey, null, arrayOf(cert))
-    }
-
-    /**
-     * Get the certificate subject for a key alias (to show what cert is installed).
-     */
-    fun getCertificateSubject(alias: String): String? {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-        val cert = keyStore.getCertificate(alias) as? X509Certificate ?: return null
-        return cert.subjectX500Principal.name
-    }
-
-    /**
-     * Get the certificate issuer for a key alias (to distinguish self-signed vs CA-signed).
-     */
-    fun getCertificateIssuer(alias: String): String? {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-        val cert = keyStore.getCertificate(alias) as? X509Certificate ?: return null
-        return cert.issuerX500Principal.name
-    }
-
-    /**
-     * Generate a PKCS#10 CSR using the hardware-backed private key.
-     * Returns the CSR in PEM format.
-     */
-    fun generateCSR(alias: String, commonName: String): String {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-        keyStore.load(null)
-
-        val privateKey = keyStore.getKey(alias, null) as? PrivateKey
-            ?: throw IllegalStateException("Private key not found for alias: $alias")
-
-        val certificate = keyStore.getCertificate(alias) as? X509Certificate
-            ?: throw IllegalStateException("Certificate not found for alias: $alias")
-
-        val publicKey = certificate.publicKey
-
-        val subject = X500Name("CN=$commonName")
-
-        // Use a custom ContentSigner that delegates to Android Keystore
-        val contentSigner = AndroidKeystoreContentSigner(privateKey)
-
-        val csrBuilder = JcaPKCS10CertificationRequestBuilder(subject, publicKey)
-        val csr = csrBuilder.build(contentSigner)
-
-        val pemBytes = csr.encoded
-        val base64 = Base64.getMimeEncoder(64, "\n".toByteArray())
-            .encodeToString(pemBytes)
-
-        return "-----BEGIN CERTIFICATE REQUEST-----\n$base64\n-----END CERTIFICATE REQUEST-----\n"
-    }
-}
-
-/**
- * ContentSigner implementation that uses an Android Keystore private key.
- * This is needed because Bouncy Castle's JcaContentSignerBuilder doesn't work
- * with Android Keystore keys directly (they require the AndroidKeyStore provider).
- */
-private class AndroidKeystoreContentSigner(
-    private val privateKey: PrivateKey
-) : ContentSigner {
-
-    private val outputStream = ByteArrayOutputStream()
-
-    override fun getAlgorithmIdentifier(): AlgorithmIdentifier {
-        // SHA256withRSA OID: 1.2.840.113549.1.1.11
-        return AlgorithmIdentifier(ASN1ObjectIdentifier("1.2.840.113549.1.1.11"))
-    }
-
-    override fun getOutputStream(): OutputStream = outputStream
-
-    override fun getSignature(): ByteArray {
-        val signature = Signature.getInstance("SHA256withRSA")
-        signature.initSign(privateKey)
-        signature.update(outputStream.toByteArray())
-        return signature.sign()
     }
 }

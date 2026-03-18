@@ -1,7 +1,9 @@
 package it.bosler.requestcsr
 
+import android.app.Activity
 import android.net.Uri
 import android.os.Bundle
+import android.security.KeyChain
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -92,6 +94,12 @@ fun CSRScreen(
         }
     }
 
+    val keyChainInstallLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        viewModel.onKeyChainInstallComplete(result.resultCode == Activity.RESULT_OK)
+    }
+
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/x-pem-file")
     ) { uri: Uri? ->
@@ -114,6 +122,15 @@ fun CSRScreen(
         }
     }
 
+    LaunchedEffect(state.pkcs12ToInstall) {
+        state.pkcs12ToInstall?.let { pkcs12 ->
+            val intent = KeyChain.createInstallIntent()
+            intent.putExtra(KeyChain.EXTRA_PKCS12, pkcs12)
+            intent.putExtra(KeyChain.EXTRA_NAME, state.pkcs12Alias)
+            keyChainInstallLauncher.launch(intent)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -131,7 +148,7 @@ fun CSRScreen(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Generate a hardware-backed key that never leaves this device, then export a certificate signing request.",
+                text = "Generate a key pair, export a CSR for signing, then install the signed certificate into the system KeyChain.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -236,7 +253,7 @@ fun CSRScreen(
             }
         }
 
-        // Keystore section
+        // Pending keys section
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -249,12 +266,17 @@ fun CSRScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "Android Keystore",
+                    text = "Pending Keys",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
+                Text(
+                    text = "Keys waiting for a signed certificate to be imported.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
-                if (state.keystoreKeys.isEmpty()) {
+                if (state.pendingKeys.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -262,18 +284,16 @@ fun CSRScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            "No keys",
+                            "No pending keys",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.alpha(0.6f),
                         )
                     }
                 } else {
-                    state.keystoreKeys.forEachIndexed { index, key ->
+                    state.pendingKeys.forEachIndexed { index, key ->
                         if (index > 0) {
-                            HorizontalDivider(
-                                modifier = Modifier.alpha(0.3f),
-                            )
+                            HorizontalDivider(modifier = Modifier.alpha(0.3f))
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -287,19 +307,9 @@ fun CSRScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                                 Text(
-                                    text = key.securityLevel,
+                                    text = "Awaiting signed certificate",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                val isSelfSigned = key.certSubject != null && key.certSubject == key.certIssuer
-                                Text(
-                                    text = if (isSelfSigned) "Self-signed (no CA cert imported)" else key.certIssuer?.let { "Signed by: $it" } ?: "No certificate",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (isSelfSigned) {
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    },
+                                    color = MaterialTheme.colorScheme.tertiary,
                                 )
                             }
                             IconButton(
@@ -310,12 +320,12 @@ fun CSRScreen(
                             ) {
                                 Icon(
                                     Icons.Outlined.Add,
-                                    contentDescription = "Import cert for ${key.alias}",
+                                    contentDescription = "Import signed cert for ${key.alias}",
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
                             IconButton(
-                                onClick = { viewModel.deleteKeystoreKey(key.alias) },
+                                onClick = { viewModel.deletePendingKey(key.alias) },
                             ) {
                                 Icon(
                                     Icons.Default.Delete,
