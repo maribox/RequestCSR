@@ -14,15 +14,12 @@ data class KeyInfo(
 )
 
 data class CSRState(
-    val keyAlias: String = "client-key",
     val clientName: String = "client",
-    val keyExists: Boolean = false,
-    val securityLevel: String = "",
     val csrPem: String = "",
     val statusMessage: String = "",
+    val isError: Boolean = false,
     val isLoading: Boolean = false,
     val readyToSave: Boolean = false,
-    val showKeystore: Boolean = false,
     val keystoreKeys: List<KeyInfo> = emptyList(),
 )
 
@@ -31,8 +28,10 @@ class CSRViewModel : ViewModel() {
     private val _state = MutableStateFlow(CSRState())
     val state: StateFlow<CSRState> = _state.asStateFlow()
 
+    private val keyAlias = "client-key"
+
     init {
-        refreshKeyStatus()
+        refreshKeystoreList()
     }
 
     fun updateClientName(name: String) {
@@ -40,53 +39,52 @@ class CSRViewModel : ViewModel() {
     }
 
     fun generateAndExport() {
-        val alias = _state.value.keyAlias
         val name = _state.value.clientName.trim().ifBlank { "client" }
 
-        _state.value = _state.value.copy(isLoading = true, statusMessage = "Generating RSA 4096 key pair...")
+        _state.value = _state.value.copy(isLoading = true, statusMessage = "Generating RSA 4096 key pair...", isError = false)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                KeystoreManager.generateKeyPair(alias)
-                val level = KeystoreManager.getKeySecurityLevel(alias)
-
+                KeystoreManager.generateKeyPair(keyAlias)
                 _state.value = _state.value.copy(statusMessage = "Generating CSR...")
 
-                val pem = KeystoreManager.generateCSR(alias, name)
+                val pem = KeystoreManager.generateCSR(keyAlias, name)
 
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    keyExists = true,
-                    securityLevel = level,
                     csrPem = pem,
                     readyToSave = true,
-                    statusMessage = "Key generated ($level). Save the CSR file.",
+                    statusMessage = "Save the CSR file.",
+                    isError = false,
                 )
+                refreshKeystoreList()
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
                     statusMessage = "Failed: ${e.message}",
+                    isError = true,
                 )
+                refreshKeystoreList()
             }
         }
     }
 
-    fun deleteKey() {
-        val alias = _state.value.keyAlias
-
+    fun deleteKeystoreKey(alias: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 KeystoreManager.deleteKey(alias)
                 _state.value = _state.value.copy(
-                    keyExists = false,
-                    securityLevel = "",
-                    csrPem = "",
-                    readyToSave = false,
-                    statusMessage = "Key deleted",
+                    statusMessage = "Deleted: $alias",
+                    isError = false,
                 )
+                if (alias == keyAlias) {
+                    _state.value = _state.value.copy(csrPem = "", readyToSave = false)
+                }
+                refreshKeystoreList()
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     statusMessage = "Delete failed: ${e.message}",
+                    isError = true,
                 )
             }
         }
@@ -96,41 +94,12 @@ class CSRViewModel : ViewModel() {
         _state.value = _state.value.copy(
             readyToSave = false,
             statusMessage = "CSR saved! Transfer it to your CA for signing.",
+            isError = false,
         )
     }
 
     fun onCSRSaveError(message: String) {
-        _state.value = _state.value.copy(statusMessage = "Save failed: $message")
-    }
-
-    fun toggleKeystore() {
-        val show = !_state.value.showKeystore
-        if (show) {
-            refreshKeystoreList()
-        } else {
-            _state.value = _state.value.copy(showKeystore = false)
-        }
-    }
-
-    fun deleteKeystoreKey(alias: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                KeystoreManager.deleteKey(alias)
-                refreshKeystoreList()
-                // Also refresh main key status if it was our key
-                if (alias == _state.value.keyAlias) {
-                    _state.value = _state.value.copy(
-                        keyExists = false,
-                        securityLevel = "",
-                        csrPem = "",
-                        readyToSave = false,
-                    )
-                }
-                _state.value = _state.value.copy(statusMessage = "Deleted key: $alias")
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(statusMessage = "Delete failed: ${e.message}")
-            }
-        }
+        _state.value = _state.value.copy(statusMessage = "Save failed: $message", isError = true)
     }
 
     private fun refreshKeystoreList() {
@@ -138,19 +107,7 @@ class CSRViewModel : ViewModel() {
             val keys = KeystoreManager.listKeys().map { alias ->
                 KeyInfo(alias, KeystoreManager.getKeySecurityLevel(alias))
             }
-            _state.value = _state.value.copy(showKeystore = true, keystoreKeys = keys)
-        }
-    }
-
-    private fun refreshKeyStatus() {
-        val alias = _state.value.keyAlias
-        viewModelScope.launch(Dispatchers.IO) {
-            val exists = KeystoreManager.keyExists(alias)
-            val level = if (exists) KeystoreManager.getKeySecurityLevel(alias) else ""
-            _state.value = _state.value.copy(
-                keyExists = exists,
-                securityLevel = level,
-            )
+            _state.value = _state.value.copy(keystoreKeys = keys)
         }
     }
 }
