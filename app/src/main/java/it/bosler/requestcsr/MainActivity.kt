@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Button
@@ -43,6 +44,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -72,6 +76,21 @@ fun CSRScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    var importAlias by remember { mutableStateOf("") }
+
+    val importCertLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null && importAlias.isNotBlank()) {
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Could not read file")
+                viewModel.importSignedCert(importAlias, bytes)
+            } catch (e: Exception) {
+                viewModel.onCSRSaveError(e.message ?: "Unknown error")
+            }
+        }
+    }
 
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/x-pem-file")
@@ -271,6 +290,28 @@ fun CSRScreen(
                                     text = key.securityLevel,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                val isSelfSigned = key.certSubject != null && key.certSubject == key.certIssuer
+                                Text(
+                                    text = if (isSelfSigned) "Self-signed (no CA cert imported)" else key.certIssuer?.let { "Signed by: $it" } ?: "No certificate",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isSelfSigned) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    importAlias = key.alias
+                                    importCertLauncher.launch(arrayOf("*/*"))
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Add,
+                                    contentDescription = "Import cert for ${key.alias}",
+                                    tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
                             IconButton(

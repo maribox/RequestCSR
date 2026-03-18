@@ -18,6 +18,7 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Base64
 
@@ -123,6 +124,43 @@ object KeystoreManager {
         } catch (e: Exception) {
             "Could not determine: ${e.message}"
         }
+    }
+
+    /**
+     * Import a CA-signed certificate and associate it with the existing private key.
+     * This replaces the self-signed cert that was generated with the key pair.
+     */
+    fun importSignedCertificate(alias: String, certBytes: ByteArray) {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        keyStore.load(null)
+
+        val privateKey = keyStore.getKey(alias, null) as? PrivateKey
+            ?: throw IllegalStateException("Private key not found for alias: $alias")
+
+        val certFactory = CertificateFactory.getInstance("X.509")
+        val cert = certFactory.generateCertificate(certBytes.inputStream()) as X509Certificate
+
+        keyStore.setKeyEntry(alias, privateKey, null, arrayOf(cert))
+    }
+
+    /**
+     * Get the certificate subject for a key alias (to show what cert is installed).
+     */
+    fun getCertificateSubject(alias: String): String? {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        keyStore.load(null)
+        val cert = keyStore.getCertificate(alias) as? X509Certificate ?: return null
+        return cert.subjectX500Principal.name
+    }
+
+    /**
+     * Get the certificate issuer for a key alias (to distinguish self-signed vs CA-signed).
+     */
+    fun getCertificateIssuer(alias: String): String? {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        keyStore.load(null)
+        val cert = keyStore.getCertificate(alias) as? X509Certificate ?: return null
+        return cert.issuerX500Principal.name
     }
 
     /**

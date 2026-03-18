@@ -11,6 +11,8 @@ import kotlinx.coroutines.launch
 data class KeyInfo(
     val alias: String,
     val securityLevel: String,
+    val certSubject: String? = null,
+    val certIssuer: String? = null,
 )
 
 data class CSRState(
@@ -102,10 +104,33 @@ class CSRViewModel : ViewModel() {
         _state.value = _state.value.copy(statusMessage = "Save failed: $message", isError = true)
     }
 
+    fun importSignedCert(alias: String, certBytes: ByteArray) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                KeystoreManager.importSignedCertificate(alias, certBytes)
+                _state.value = _state.value.copy(
+                    statusMessage = "Signed certificate imported for: $alias",
+                    isError = false,
+                )
+                refreshKeystoreList()
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    statusMessage = "Import failed: ${e.message}",
+                    isError = true,
+                )
+            }
+        }
+    }
+
     private fun refreshKeystoreList() {
         viewModelScope.launch(Dispatchers.IO) {
             val keys = KeystoreManager.listKeys().map { alias ->
-                KeyInfo(alias, KeystoreManager.getKeySecurityLevel(alias))
+                KeyInfo(
+                    alias = alias,
+                    securityLevel = KeystoreManager.getKeySecurityLevel(alias),
+                    certSubject = KeystoreManager.getCertificateSubject(alias),
+                    certIssuer = KeystoreManager.getCertificateIssuer(alias),
+                )
             }
             _state.value = _state.value.copy(keystoreKeys = keys)
         }
