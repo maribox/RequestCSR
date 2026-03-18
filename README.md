@@ -6,10 +6,10 @@ The private key is generated on-device and installed into the Android system Key
 
 ## Flow
 
-1. **Generate Key + CSR** — creates an RSA 4096 key pair and a CSR. The CSR is saved to Downloads.
-2. **Get the CSR signed** — transfer the `.csr.pem` to your CA and sign it.
-3. **Import signed certificate** — tap the + button next to the pending key, select the signed `.crt` file. The app bundles the private key + signed cert into a PKCS#12 and launches the Android system KeyChain installer.
-4. **Use the certificate** — apps like OpenVPN for Android can now select it from the system KeyChain.
+1. **Generate Key + CSR** -creates an RSA 4096 key pair and a CSR. The CSR is saved to Downloads.
+2. **Get the CSR signed** -transfer the `.csr.pem` to your CA and sign it.
+3. **Import signed certificate** -tap the + button next to the pending key, select the signed `.crt` file. The app bundles the private key + signed cert into a PKCS#12 and launches the Android system KeyChain installer.
+4. **Use the certificate** -apps like OpenVPN for Android can now select it from the system KeyChain.
 
 ## Example: OpenVPN with hardware-bound client keys
 
@@ -23,21 +23,25 @@ With RequestCSR, the private key is generated **on the phone** and never leaves 
    easyrsa sign-req client phone
    ```
 3. Transfer the signed certificate back to the phone
-4. In RequestCSR, tap **+** next to the pending key, select the signed `.crt` — the app installs the key + cert into the Android system KeyChain
-5. In OpenVPN for Android, import your `.ovpn` profile (which contains only the CA cert and tls-crypt key — no client cert or private key)
+4. In RequestCSR, tap **+** next to the pending key, select the signed `.crt` -the app installs the key + cert into the Android system KeyChain
+5. In OpenVPN for Android, import your `.ovpn` profile (which contains only the CA cert and tls-crypt key -no client cert or private key)
 6. Edit the profile, select the certificate from the system KeyChain, and connect
 
 **What's protected:**
-- The `.ovpn` file alone is useless — it contains no client credentials, only the CA cert (public) and tls-crypt key (DoS protection)
+- The `.ovpn` file alone is useless -it contains no client credentials, only the CA cert (public) and tls-crypt key (DoS protection)
 - The private key lives in the system KeyChain, hardware-backed by TEE/Titan M2 on supported devices
 - Even if the phone is rooted, the key cannot be extracted from hardware-backed storage
-- If the phone is lost, revoke the certificate server-side — no one can clone the key to another device
+- If the phone is lost, revoke the certificate server-side -no one can clone the key to another device
 
 ## Building
 
 ```
 ./gradlew assembleDebug
 ```
+
+## AI disclosure
+
+This app was built with the help of Claude (Anthropic).
 
 ## License
 
