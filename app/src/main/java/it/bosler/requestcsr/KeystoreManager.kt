@@ -61,6 +61,15 @@ object KeystoreManager {
     }
 
     /**
+     * List all key aliases in the Android Keystore.
+     */
+    fun listKeys(): List<String> {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+        keyStore.load(null)
+        return keyStore.aliases().toList()
+    }
+
+    /**
      * Check whether the key with the given alias exists in the keystore.
      */
     fun keyExists(alias: String): Boolean {

@@ -15,31 +15,32 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
@@ -79,13 +80,24 @@ fun CSRScreen(
         }
     }
 
+    // Auto-launch file picker when CSR is ready
+    LaunchedEffect(state.readyToSave) {
+        if (state.readyToSave) {
+            val filename = "${state.clientName.trim().ifBlank { "client" }}.csr.pem"
+            saveFileLauncher.launch(filename)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Spacer(modifier = Modifier.height(32.dp))
+
         Text(
             text = "Request CSR",
             style = MaterialTheme.typography.headlineLarge,
@@ -93,122 +105,35 @@ fun CSRScreen(
         )
 
         Text(
-            text = "Generate a hardware-backed key and CSR for OpenVPN client certificates.",
+            text = "Generates a hardware-backed key that never leaves this device, then exports a certificate signing request (CSR).",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Key Alias
         OutlinedTextField(
-            value = state.keyAlias,
-            onValueChange = { viewModel.updateKeyAlias(it) },
-            label = { Text("Key Alias") },
+            value = state.clientName,
+            onValueChange = { viewModel.updateClientName(it) },
+            label = { Text("Client name") },
+            placeholder = { Text("client") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
 
-        // Common Name
-        OutlinedTextField(
-            value = state.commonName,
-            onValueChange = { viewModel.updateCommonName(it) },
-            label = { Text("Common Name (CN)") },
-            placeholder = { Text("e.g. client1") },
-            singleLine = true,
+        Button(
+            onClick = { viewModel.generateAndExport() },
+            enabled = !state.isLoading,
             modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Key status card
-        if (state.keyExists) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                ),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Key Status",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Alias: ${state.keyAlias}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = "Security: ${state.securityLevel}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
-
-        // Action buttons
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(
-                onClick = { viewModel.generateKey() },
-                enabled = !state.isLoading,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Generate Key")
-            }
-
-            Button(
-                onClick = { viewModel.generateCSR() },
-                enabled = !state.isLoading && state.keyExists && state.commonName.isNotBlank(),
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Generate CSR")
-            }
+            Text("Generate Key + CSR")
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedButton(
-                onClick = {
-                    val filename = "${state.commonName.ifBlank { state.keyAlias }}.csr.pem"
-                    saveFileLauncher.launch(filename)
-                },
-                enabled = state.csrPem.isNotBlank(),
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Save CSR")
-            }
-
-            OutlinedButton(
-                onClick = { viewModel.deleteKey() },
-                enabled = !state.isLoading && state.keyExists,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Delete Key")
-            }
-        }
-
-        // Loading indicator
         if (state.isLoading) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator()
-                Spacer(modifier = Modifier.width(12.dp))
-                Text("Please wait...")
-            }
+            CircularProgressIndicator()
         }
 
-        // Status message
+        // Status
         if (state.statusMessage.isNotBlank()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -230,27 +155,93 @@ fun CSRScreen(
             }
         }
 
-        // CSR output
-        if (state.csrPem.isNotBlank()) {
-            Text(
-                text = "CSR (PEM)",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-            )
+        // Key info
+        if (state.keyExists) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Security: ${state.securityLevel}", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
+            OutlinedButton(
+                onClick = { viewModel.deleteKey() },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Delete Key")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Keystore viewer
+        OutlinedButton(
+            onClick = { viewModel.toggleKeystore() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (state.showKeystore) "Hide Keystore" else "Show Keystore")
+        }
+
+        if (state.showKeystore) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
             ) {
-                SelectionContainer {
-                    Text(
-                        text = state.csrPem,
-                        modifier = Modifier.padding(12.dp),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
-                    )
+                Column(modifier = Modifier.padding(16.dp)) {
+                    if (state.keystoreKeys.isEmpty()) {
+                        Text(
+                            "No keys in Android Keystore",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            "${state.keystoreKeys.size} key(s) in Android Keystore:",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        state.keystoreKeys.forEach { key ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = key.alias,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        text = key.securityLevel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.deleteKeystoreKey(key.alias) },
+                                    modifier = Modifier.size(36.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete ${key.alias}",
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                    }
                 }
             }
         }
